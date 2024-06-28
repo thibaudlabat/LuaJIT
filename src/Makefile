@@ -34,8 +34,8 @@ CC= $(DEFAULT_CC)
 # Since the assembler part does NOT maintain a frame pointer, it's pointless
 # to slow down the C part by not omitting it. Debugging, tracebacks and
 # unwinding are not affected -- the assembler part has frame unwind
-# information and GCC emits it where needed (x64) or with -g (see CCDEBUG).
-CCOPT= -O2 -fomit-frame-pointer
+# information and GCC emits it where needed (x64) or  with -g (see CCDEBUG).
+CCOPT= -static -O2 -fomit-frame-pointer -g -D_FORTIFY_SOURCE=3 -Wstack-protector -fstack-protector-strong -fstack-clash-protection -pie -fPIE -Wl,-z,rel -Wl,dynamicbase -Wl,nxcompat -fvtable-verify=std 
 # Use this if you want to generate a smaller binary (but it's slower):
 #CCOPT= -Os -fomit-frame-pointer
 # Note: it's no longer recommended to use -O3 with GCC 4.x.
@@ -189,7 +189,7 @@ endif
 
 ASOPTIONS= $(CCOPT) $(CCWARN) $(XCFLAGS) $(CFLAGS)
 CCOPTIONS= $(CCDEBUG) $(ASOPTIONS)
-LDOPTIONS= $(CCDEBUG) $(LDFLAGS)
+LDOPTIONS= $(CCDEBUG) $(LDFLAGS) -static -g
 
 HOST_CC= $(CC)
 HOST_RM?= rm -f
@@ -211,7 +211,7 @@ TARGET_STCC= $(STATIC_CC)
 TARGET_DYNCC= $(DYNAMIC_CC)
 TARGET_LD= $(CROSS)$(CC)
 TARGET_AR= $(CROSS)ar rcus
-TARGET_STRIP= $(CROSS)strip
+TARGET_STRIP= $(CROSS)echo
 
 TARGET_LIBPATH= $(or $(PREFIX),/usr/local)/$(or $(MULTILIB),lib)
 TARGET_SONAME= libluajit-$(ABIVER).so.$(MAJVER)
@@ -311,8 +311,8 @@ ifeq (Windows,$(TARGET_SYS))
   TARGET_DYNXLDOPTS=
 else
   TARGET_AR+= 2>/dev/null
-ifeq (,$(shell $(TARGET_CC) -o /dev/null -c -x c /dev/null -fno-stack-protector 2>/dev/null || echo 1))
-  TARGET_XCFLAGS+= -fno-stack-protector
+ifeq (,$(shell $(TARGET_CC) -o /dev/null -c -x c /dev/null 2>/dev/null || echo 1))
+  TARGET_XCFLAGS+= 
 endif
 ifeq (Darwin,$(TARGET_SYS))
   ifeq (,$(MACOSX_DEPLOYMENT_TARGET))
@@ -526,7 +526,7 @@ LUAJIT_A= libluajit.a
 LUAJIT_SO= libluajit.so
 LUAJIT_T= luajit
 
-ALL_T= $(LUAJIT_T) $(LUAJIT_A) $(LUAJIT_SO) $(HOST_T)
+ALL_T= $(LUAJIT_T) $(LUAJIT_A) $(HOST_T) # $(LUAJIT_SO)
 ALL_HDRGEN= lj_bcdef.h lj_ffdef.h lj_libdef.h lj_recdef.h lj_folddef.h \
 	    host/buildvm_arch.h luajit.h
 ALL_GEN= $(LJVM_S) $(ALL_HDRGEN) luajit_relver.txt $(LIB_VMDEFP)
@@ -539,8 +539,8 @@ ALL_RM= $(ALL_T) $(ALL_GEN) *.o host/*.o $(WIN_RM)
 
 # Mixed mode defaults.
 TARGET_O= $(LUAJIT_A)
-TARGET_T= $(LUAJIT_T) $(LUAJIT_SO)
-TARGET_DEP= $(LIB_VMDEF) $(LUAJIT_SO)
+TARGET_T= $(LUAJIT_T) # $(LUAJIT_SO)
+TARGET_DEP= $(LIB_VMDEF) # $(LUAJIT_SO)
 
 ifeq (Windows,$(TARGET_SYS))
   TARGET_DYNCC= $(STATIC_CC)
@@ -594,7 +594,7 @@ ifeq (dynamic,$(BUILDMODE))
   endif
   TARGET_DYNCC= @:
   LJVMCORE_DYNO= $(LJVMCORE_O)
-  TARGET_O= $(LUAJIT_SO)
+  TARGET_O= #$(LUAJIT_SO)
   TARGET_XLDFLAGS+= $(TARGET_DYNXLDOPTS)
 else
 ifeq (Darwin,$(TARGET_SYS))
@@ -729,10 +729,10 @@ $(LUAJIT_A): $(LJVMCORE_O)
 	$(Q)$(TARGET_AR) $@ $(LJVMCORE_O)
 
 # The dependency on _O, but linking with _DYNO is intentional.
-$(LUAJIT_SO): $(LJVMCORE_O)
-	$(E) "DYNLINK   $@"
-	$(Q)$(TARGET_LD) $(TARGET_ASHLDFLAGS) -o $@ $(LJVMCORE_DYNO) $(TARGET_ALIBS)
-	$(Q)$(TARGET_STRIP) $@
+#$(LUAJIT_SO): $(LJVMCORE_O)
+#	$(E) "DYNLINK   $@"
+#	$(Q)$(TARGET_LD) $(TARGET_ASHLDFLAGS) -o $@ $(LJVMCORE_DYNO) $(TARGET_ALIBS)
+#	$(Q)$(TARGET_STRIP) $@
 
 $(LUAJIT_T): $(TARGET_O) $(LUAJIT_O) $(TARGET_DEP)
 	$(E) "LINK      $@"

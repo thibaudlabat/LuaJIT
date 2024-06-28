@@ -10,6 +10,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/prctl.h>
+#include <sys/fcntl.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
+#include <linux/audit.h>
+#include <sys/syscall.h>
+
 #define luajit_c
 
 #include "lua.h"
@@ -209,22 +216,9 @@ static int incomplete(lua_State *L, int status)
   return 0;  /* else... */
 }
 
-static int pushline(lua_State *L, int firstline)
-{
-  char buf[LUA_MAXINPUT];
-  write_prompt(L, firstline);
-  if (fgets(buf, LUA_MAXINPUT, stdin)) {
-    size_t len = strlen(buf);
-    if (len > 0 && buf[len-1] == '\n')
-      buf[len-1] = '\0';
-    if (firstline && buf[0] == '=')
-      lua_pushfstring(L, "return %s", buf+1);
-    else
-      lua_pushstring(L, buf);
-    return 1;
-  }
-  return 0;
-}
+
+
+static int pushline(lua_State *L, int firstline);
 
 static int loadline(lua_State *L)
 {
@@ -508,6 +502,14 @@ static struct Smain {
   int status;
 } smain;
 
+
+
+
+const char *lua_init_script = "local clear = require(\"clear_globals\")\n"
+                              "clear.clearAllGlobals()\n";
+
+int call_c_function(lua_State *L);
+
 static int pmain(lua_State *L)
 {
   struct Smain *s = &smain;
@@ -532,6 +534,7 @@ static int pmain(lua_State *L)
   /* Stop collector during library initialization. */
   lua_gc(L, LUA_GCSTOP, 0);
   luaL_openlibs(L);
+
   lua_gc(L, LUA_GCRESTART, -1);
 
   createargtable(L, argv, s->argc, argn);
@@ -550,6 +553,13 @@ static int pmain(lua_State *L)
     s->status = handle_script(L, argv + argn);
     if (s->status != LUA_OK) return 0;
   }
+  
+  if (luaL_dostring(L, lua_init_script)) {
+      printf("err: %s\n", lua_tostring(L, -1));
+  }
+
+  lua_pushcfunction(L, call_c_function);
+  lua_setglobal(L, "call_c_function");
 
   if ((flags & FLAGS_INTERACTIVE)) {
     print_jit_status(L);
@@ -558,6 +568,7 @@ static int pmain(lua_State *L)
     if (lua_stdin_is_tty()) {
       print_version();
       print_jit_status(L);
+      printf("\nYou are in a Lua sandbox. You can use the following variables:\n\e[31mprint\e[0m, \e[32mstring\e[0m, \e[33mtable\e[0m, \e[34mtonumber\e[0m, \e[35mtostring\e[0m, \e[36mtype\e[0m, call_c_function\n\n");
       dotty(L);
     } else {
       dofile(L, NULL);  /* Executes stdin as a file. */
@@ -566,21 +577,180 @@ static int pmain(lua_State *L)
   return 0;
 }
 
+int init_seccomp()
+{
+#define ALLOW(NR) \
+    BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, (NR), 0, 1), \
+    BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_ALLOW) \
+
+    struct sock_filter filter[] = {
+        BPF_STMT(BPF_LD + BPF_W + BPF_ABS, offsetof(struct seccomp_data, arch)),
+        BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K, AUDIT_ARCH_X86_64, 1, 0),
+        BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_KILL),
+
+        BPF_STMT(BPF_LD + BPF_W + BPF_ABS, offsetof(struct seccomp_data, nr)),
+        ALLOW(SYS_read),
+        ALLOW(SYS_write),
+        ALLOW(SYS_mmap),
+        ALLOW(SYS_mprotect),
+        ALLOW(SYS_rt_sigaction),
+        ALLOW(SYS_close),
+        ALLOW(SYS_getrandom),
+        ALLOW(SYS_brk),
+        ALLOW(SYS_openat),
+        ALLOW(SYS_newfstatat),
+        ALLOW(SYS_ioctl),
+        ALLOW(SYS_futex),
+        ALLOW(SYS_munmap),
+        ALLOW(SYS_exit_group),
+
+        BPF_STMT(BPF_RET + BPF_K, SECCOMP_RET_KILL),
+    };
+#undef ALLOW
+
+    struct sock_fprog prog = {
+        .len = sizeof(filter) / sizeof(*filter),
+        .filter = filter,
+    };
+
+    return prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog);
+}
+
+#include "math.h"
+int random_digit()
+{
+  return rand()%10;
+}
+
+#include "time.h"
+int get_time()
+{
+  return time(0);  
+}
+
+int do_something()
+{
+  // do not use this function
+  
+  int x=0xdeadbeef;
+  int y=0xcafecafe;
+  for(int i=0;i<10;++i){
+    if(random_digit()%2==1){
+       asm ("bsfl %1,%0"
+        : "=r" (x)
+        : "r" (y)
+        : "cc");
+    }
+    
+    return x+y;
+  }
+}
+
+#define C_FUNCTIONS_N 10
+
+
+struct global_var_t {
+  char input_buffer[LUA_MAXINPUT];
+  int (*c_functions[C_FUNCTIONS_N]) (void);
+} 
+__attribute__ ((aligned (0x10000))) // early optimization rocks
+global = {{},{random_digit,get_time,do_something,0,0,0,0,0,0,0}};
+
+static int pushline(lua_State *L, int firstline)
+{
+  write_prompt(L, firstline);
+  if (fgets(global.input_buffer, LUA_MAXINPUT, stdin)) {
+    size_t len = strlen(global.input_buffer);
+    if (len > 0 && global.input_buffer[len-1] == '\n')
+      global.input_buffer[len-1] = '\0';
+    if (firstline && global.input_buffer[0] == '=')
+      lua_pushfstring(L, "return %s", global.input_buffer+1);
+    else
+      lua_pushstring(L, global.input_buffer);
+    return 1;
+  }
+  return 0;
+}
+int main(int argc, char **argv);
+
+// ChatGPT told me that my function call would be safe with this.
+int check_safe_func(void* ptr){
+  return ((size_t)ptr)>>32 | !( ptr>(size_t)malloc(10)
+    ||(ptr == &random_digit || ptr==&do_something || ptr==&get_time));
+}
+
+
+
+int call_c_function(lua_State *L)
+{
+
+  int n = luaL_checkinteger(L, 1);
+
+  int (*func) (void) = global.c_functions[n];
+
+  int retval;
+
+  // should not happen but we never know
+  if(((size_t)&global.c_functions[n] & ~0xfff) != (((size_t)&global) & ~0xfff))
+  {
+    printf("[DEBUG] Unaligned call.\n");
+    retval = -1;
+  }
+
+    if (n>=C_FUNCTIONS_N){
+      printf("[DEBUG] Out of bounds call at index %d\n",n);
+      retval = -2;
+    }
+    else if(func==0){
+      printf("[DEBUG] Null function pointer at index %d\n",n);
+      retval = -3;
+    }
+  else if(check_safe_func(func))  {
+    printf("[DEBUG] Unsafe function call.\n");
+    retval = -4;
+  }
+    else{
+      printf("[DEBUG] Calling C function at address %p\n",func);
+      retval = func();
+    }
+
+
+    lua_pushinteger(L, retval);
+    return 1;
+}
+
+char flag[0x40] = {0};
+FILE *flagfile;
+
 int main(int argc, char **argv)
 {
+  flagfile = popen("/bin/get_flag", "r");
+  fread(flag, sizeof(flag) - 1, 1, flagfile);
+
+  srand(time(NULL));
   int status;
   lua_State *L;
+  
   if (!argv[0]) argv = empty_argv; else if (argv[0][0]) progname = argv[0];
   L = lua_open();
+  
+  luaL_openlibs(L); // otherwise we can't use "require"
+
   if (L == NULL) {
     l_message("cannot create state: not enough memory");
     return EXIT_FAILURE;
   }
+    
   smain.argc = argc;
   smain.argv = argv;
+
+  printf("[DEBUG] Seccomps activated\n");
+  fflush(stdout);
+
+  init_seccomp();
+  
   status = lua_cpcall(L, pmain, NULL);
   report(L, status);
   lua_close(L);
   return (status || smain.status > 0) ? EXIT_FAILURE : EXIT_SUCCESS;
 }
-
