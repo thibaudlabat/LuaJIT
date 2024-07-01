@@ -1,3 +1,5 @@
+https://github.com/thibaudlabat/LuaJIT/
+
 LuaJIT 2.1 - exploitation challenge
 -----------------------------------
 
