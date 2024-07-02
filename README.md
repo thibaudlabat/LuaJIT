@@ -42,3 +42,11 @@ f = function()
 end
 f()
 ```
+
+## Run instructions
+
+Build and run the executable:
+```sh
+make
+cd src; ./luajit -jdump=im
+```
