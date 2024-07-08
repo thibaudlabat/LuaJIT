@@ -53,7 +53,7 @@ May be useful to have a clear view of what has been changed.
 git clone https://github.com/LuaJIT/LuaJIT.git 
 cd LuaJIT
 git checkout 93e87998b24021b94de8d1c8db244444c46fb6e9
-git apply ../challenge.diff
+git apply --ignore-whitespace ../challenge.diff
 ```
 
 * Build
