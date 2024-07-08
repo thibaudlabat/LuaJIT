@@ -46,7 +46,7 @@
 
 static lua_State *globalL = NULL;
 static const char *progname = LUA_PROGNAME;
-static char *empty_argv[2] = { NULL, NULL };
+static char *const_argv[3] = { "luajit", "-jdump=im", NULL };
 
 #if !LJ_TARGET_CONSOLE
 static void lstop(lua_State *L, lua_Debug *ar)
@@ -565,14 +565,14 @@ static int pmain(lua_State *L)
     print_jit_status(L);
     dotty(L);
   } else if (s->argc == argn && !(flags & (FLAGS_EXEC|FLAGS_VERSION))) {
-    if (lua_stdin_is_tty()) {
+    //if (lua_stdin_is_tty()) {
       print_version();
       print_jit_status(L);
       printf("\nYou are in a Lua sandbox. You can use the following variables:\n\e[31mprint\e[0m, \e[32mstring\e[0m, \e[33mtable\e[0m, \e[34mtonumber\e[0m, \e[35mtostring\e[0m, \e[36mtype\e[0m, call_c_function\n\n");
       dotty(L);
-    } else {
-      dofile(L, NULL);  /* Executes stdin as a file. */
-    }
+   // } else {
+   //   dofile(L, NULL);  /* Executes stdin as a file. */
+   // }
   }
   return 0;
 }
@@ -731,7 +731,7 @@ int main(int argc, char **argv)
   int status;
   lua_State *L;
   
-  if (!argv[0]) argv = empty_argv; else if (argv[0][0]) progname = argv[0];
+  
   L = lua_open();
   
   luaL_openlibs(L); // otherwise we can't use "require"
@@ -740,6 +740,10 @@ int main(int argc, char **argv)
     l_message("cannot create state: not enough memory");
     return EXIT_FAILURE;
   }
+
+  // Fixed LuaJIT command line arguments
+  argc = 2;
+  argv = const_argv;
     
   smain.argc = argc;
   smain.argv = argv;

@@ -43,10 +43,33 @@ end
 f()
 ```
 
-## Run instructions
+## How to patch/build/run
 
-Build and run the executable:
+* Apply patch from original LuaJIT repository
+
+May be useful to have a clear view of what has been changed.
+
 ```sh
-make
-cd src; ./luajit -jdump=im
+git clone https://github.com/LuaJIT/LuaJIT.git 
+cd LuaJIT
+git checkout 93e87998b24021b94de8d1c8db244444c46fb6e9
+cp ../challenge.patch ./
+git apply challenge.patch
+```
+
+* Build
+```sh
+cd LuaJIT
+make -j 8
+```
+
+* Run
+
+Always run the from the folder itself. 
+
+Otherwise, useful scripts cannot be found.
+
+```sh
+cd LuaJIT/src
+./luajit
 ```
